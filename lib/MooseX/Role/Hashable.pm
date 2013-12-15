@@ -14,7 +14,7 @@ use namespace::autoclean;
 
 =head1 VERSION
 
-Version 0.01
+Version 1.00
 
 =cut
 
@@ -22,7 +22,9 @@ our $VERSION = '1.00';
 
 =head1 SYNOPSIS
 
-This module adds a single
+This module adds a single method to an object to convert it into a simple hash.
+In some ways, this can be seen as the inverse function to I<new>, provided
+nothing too crazy is going on suring initialization.
 
 Example usage:
 
