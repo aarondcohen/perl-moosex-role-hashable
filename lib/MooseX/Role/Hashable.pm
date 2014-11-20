@@ -10,6 +10,7 @@ use strict;
 use warnings;
 
 use Moose::Role;
+use List::Util qw{first};
 use namespace::autoclean;
 
 =head1 VERSION
@@ -46,6 +47,18 @@ Example usage:
 
 =cut
 
+do {
+	my $moose_meta = Moose::Meta::Class->meta;
+	$moose_meta->make_mutable;
+	$moose_meta->add_after_method_modifier('make_immutable', sub {
+		my $meta = shift;
+		$meta->name->optimize_as_hash
+			if $meta->name->can('does')
+			&& $meta->name->does(__PACKAGE__);
+	});
+	$moose_meta->make_immutable;
+};
+
 =head1 METHODS
 
 =cut
@@ -58,12 +71,34 @@ as_hash will perform a shallow copy.
 
 =cut
 
-sub as_hash {
+my %CLASS_TO_IMPLEMENTATION;
+
+my $_as_hash_fast = sub { +{ %{$_[0]} } };
+
+my $_as_hash_safe = sub {
 	my $self = shift;
 	return +{
 		map { ($_->name => $_->get_value($self)) }
 		$self->meta->get_all_attributes
 	};
+};
+
+sub as_hash {
+	my $self = shift;
+
+	my $implementation = $CLASS_TO_IMPLEMENTATION{ref $self} || $_as_hash_safe;
+	return $implementation->($self);
+}
+
+sub optimize_as_hash {
+	my $class = shift;
+
+	$CLASS_TO_IMPLEMENTATION{$class} = $_as_hash_fast
+		if $class->can('does')
+		&& ! $class->does('MooseX::InsideOut::Role::Meta::Instance')
+		&& ! first { $_->is_lazy } $class->meta->get_all_attributes;
+
+	return;
 }
 
 =head1 AUTHOR
