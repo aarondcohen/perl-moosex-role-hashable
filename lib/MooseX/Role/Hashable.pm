@@ -10,7 +10,6 @@ use strict;
 use warnings;
 
 use Moose::Role;
-use List::Util qw{first};
 use namespace::autoclean;
 
 =head1 VERSION
@@ -73,7 +72,14 @@ as_hash will perform a shallow copy.
 
 my %CLASS_TO_IMPLEMENTATION;
 
-my $_as_hash_fast = sub { +{ %{$_[0]} } };
+my $_as_hash_fast = sub {
+	my $self = shift;
+
+	my @missing_attr = grep { ! exists $self->{$_->name} } $self->meta->get_all_attributes;
+	@missing_attr
+		? return +{ %{$self}, map { ($_->name => $_->get_value($self)) } @missing_attr}
+		: return +{ %{$self} };
+};
 
 my $_as_hash_safe = sub {
 	my $self = shift;
@@ -95,8 +101,7 @@ sub optimize_as_hash {
 
 	$CLASS_TO_IMPLEMENTATION{$class} = $_as_hash_fast
 		if $class->can('does')
-		&& ! $class->does('MooseX::InsideOut::Role::Meta::Instance')
-		&& ! first { $_->is_lazy } $class->meta->get_all_attributes;
+		&& ! $class->does('MooseX::InsideOut::Role::Meta::Instance');
 
 	return;
 }
