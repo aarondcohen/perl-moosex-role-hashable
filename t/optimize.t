@@ -9,7 +9,7 @@ use lib "$FindBin::Bin/../lib/";
 use Test::Most tests => 2;
 
 {
-	package Foo::Fast;
+	package Foo::FastV1;
 	use Moose;
 	with 'MooseX::Role::Hashable';
 
@@ -40,7 +40,7 @@ use Test::Most tests => 2;
 	has bar2 => (is => 'rw', default => 46);
 }
 
-my $foo_fast = Foo::Fast->new;
+my $foo_fast = Foo::FastV1->new;
 my $foo_lazy = Foo::Lazy->new;
 my $foo_slow = Foo::Slow->new;
 
