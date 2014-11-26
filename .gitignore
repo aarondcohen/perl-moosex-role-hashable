@@ -19,3 +19,4 @@ inc/
 local/
 nytprof.out
 pm_to_blib
+*.sw*

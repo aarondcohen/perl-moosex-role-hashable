@@ -7,10 +7,10 @@ MooseX::Role::Hashable - transform the object into a hash
 =cut
 
 use strict;
-use warnings;
 
 use List::Util qw{first};
-use Moose::Role;
+use MooseX::Role::Parameterized;
+
 use namespace::autoclean;
 
 =head1 VERSION
@@ -47,7 +47,14 @@ Example usage:
 
 =cut
 
-do {
+parameter include_attr => (isa => 'ArrayRef', default => sub { [] });
+
+my $INCLUDE_ATTR;
+
+role {
+	my $params = shift;
+	$INCLUDE_ATTR = $params->include_attr;
+
 	my $moose_meta = Moose::Meta::Class->meta;
 	$moose_meta->make_mutable;
 	$moose_meta->add_after_method_modifier('make_immutable', sub {
@@ -73,12 +80,27 @@ as_hash will perform a shallow copy.
 
 my %CLASS_TO_IMPLEMENTATION;
 
+my $_as_hash_fast_v3 = sub {
+	my $self = shift;
+	my $include_attr = shift;
+
+	my $new_hash;
+	my @missing_attr;
+	for (@$include_attr) {
+		exists $self->{$_}
+			? $new_hash->{$_} = $self->{$_}
+			: push @missing_attr, $_;
+	}
+	#return +{ map { ($_ => $self->meta->get_attribute($_)->get_value($self)) } @$include_attr };
+	return +{ %{$new_hash}, map { ($ => $self->meta->get_attribute($_)->get_value($self)) } @missing_attr };
+};
+
 my $_as_hash_fast_v2 = sub {
 	my $self = shift;
 
 	my @missing_attr = grep { ! exists $self->{$_->name} } $self->meta->get_all_attributes;
 	@missing_attr
-		? return +{ %{$self}, map { ($_->name => $_->get_value($self)) } @missing_attr}
+		? return +{ %{$self}, map { ($_->name => $_->get_value($self)) } @missing_attr }
 		: return +{ %{$self} };
 };
 
@@ -95,20 +117,24 @@ my $_as_hash_safe = sub {
 sub as_hash {
 	my $self = shift;
 
-	my $implementation = $CLASS_TO_IMPLEMENTATION{ref $self} || $_as_hash_safe;
-	return $implementation->($self);
+	my $details = $CLASS_TO_IMPLEMENTATION{ref $self} || [$_as_hash_safe];
+	my ($implementation, $include_attr) = @$details;
+	return $implementation->($self, $include_attr);
 }
 
 sub optimize_as_hash {
 	my $class = shift;
 
 	if ($class->can('does') && ! $class->does('MooseX::InsideOut::Role::Meta::Instance')) {
-		if (! first { $_->is_lazy } $class->meta->get_all_attributes) {
-			$CLASS_TO_IMPLEMENTATION{$class} = $_as_hash_fast_v1
+		if ( defined $INCLUDE_ATTR && @$INCLUDE_ATTR ) {
+			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v3, $INCLUDE_ATTR];
+		} elsif ( first { $_->is_lazy } $class->meta->get_all_attributes ) {
+			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v2];
 		} else {
-			$CLASS_TO_IMPLEMENTATION{$class} = $_as_hash_fast_v2
+			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v1];
 		}
 	}
+
 	return;
 }
 
