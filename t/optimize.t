@@ -20,17 +20,6 @@ use Test::Most tests => 3;
 }
 
 {
-	package Foo::FastV3;
-	use Moose;
-	with 'MooseX::Role::Hashable' => {include_attr => [qw{bar1 bar2}]};
-
-	has bar1 => (is => 'rw', default => 23);
-	has bar2 => (is => 'rw', default => 46);
-
-	__PACKAGE__->meta->make_immutable;
-}
-
-{
 	package Foo::FastV2::Lazy;
 	use Moose;
 	with 'MooseX::Role::Hashable';
@@ -41,6 +30,19 @@ use Test::Most tests => 3;
 
 	__PACKAGE__->meta->make_immutable;
 }
+
+{
+	package Foo::FastV3;
+	use Moose;
+	with 'MooseX::Role::Hashable' => {exclude_attr => [qw{bar3 bar4}]};
+
+	has bar1 => (is => 'rw', default => 23);
+	has bar2 => (is => 'rw', default => 46);
+	has bar3 => (is => 'rw', default => 42);
+
+	__PACKAGE__->meta->make_immutable;
+}
+
 
 {
 	package Foo::Slow;

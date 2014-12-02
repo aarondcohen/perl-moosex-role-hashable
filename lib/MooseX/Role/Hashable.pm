@@ -7,8 +7,9 @@ MooseX::Role::Hashable - transform the object into a hash
 =cut
 
 use strict;
+use warnings;
 
-use List::Util qw{first};
+use List::Util qw{any first};
 use MooseX::Role::Parameterized;
 
 use namespace::autoclean;
@@ -31,7 +32,7 @@ Example usage:
 
 	package Foo;
 	use Moose;
-	use MooseX::Role::Hashable;
+	with MooseX::Role::Hashable;
 
 	has field1 => (is => 'rw');
 	has field2 => (is => 'ro');
@@ -45,15 +46,34 @@ Example usage:
 	$foo->as_hash;
 	# => {field1 => 'val1', field2 => 'val2', field3 => 'val3'}
 
+Optionally, you can explcitly remove fields from the hash.
+Example usage:
+	package Foo;
+	use Moose;
+	with 'MooseX::Role::Hashable' => {exclude_attr => [qw{field3 field4}]};
+
+	has field1 => (is => 'rw');
+	has field2 => (is => 'ro');
+	has field3 => (is => 'bare');
+	has field4 => (is => 'rw');
+
+	__PACKAGE__->meta->make_immutable;
+
+	package main;
+
+	my $foo = Foo->new(field1 => 'val1', field2 => 'val2', field3 => 'val3');
+	$foo->as_hash;
+	# => {field1 => 'val1', field2 => 'val2'}
+
 =cut
 
-parameter include_attr => (isa => 'ArrayRef', default => sub { [] });
+parameter exclude_attr => (isa => 'ArrayRef', default => sub { [] });
 
-my $INCLUDE_ATTR;
+my $EXCLUDE_ATTR;
 
 role {
 	my $params = shift;
-	$INCLUDE_ATTR = $params->include_attr;
+	$EXCLUDE_ATTR = $params->exclude_attr;
 
 	my $moose_meta = Moose::Meta::Class->meta;
 	$moose_meta->make_mutable;
@@ -82,26 +102,26 @@ my %CLASS_TO_IMPLEMENTATION;
 
 my $_as_hash_fast_v3 = sub {
 	my $self = shift;
-	my $include_attr = shift;
+	my $exclude_attr = shift;
 
-	my $new_hash;
-	my @missing_attr;
-	for (@$include_attr) {
-		exists $self->{$_}
-			? $new_hash->{$_} = $self->{$_}
-			: push @missing_attr, $_;
-	}
-	#return +{ map { ($_ => $self->meta->get_attribute($_)->get_value($self)) } @$include_attr };
-	return +{ %{$new_hash}, map { ($ => $self->meta->get_attribute($_)->get_value($self)) } @missing_attr };
+	my %new_hash = %$self;
+	delete @new_hash{@$exclude_attr};
+	return \%new_hash;
 };
 
 my $_as_hash_fast_v2 = sub {
 	my $self = shift;
+	my $include_attr = shift;
 
-	my @missing_attr = grep { ! exists $self->{$_->name} } $self->meta->get_all_attributes;
-	@missing_attr
-		? return +{ %{$self}, map { ($_->name => $_->get_value($self)) } @missing_attr }
-		: return +{ %{$self} };
+	my %new_hash;
+	my @missing_attr;
+	for (@$include_attr) {
+		exists $self->{$_}
+			? $new_hash{$_} = $self->{$_}
+			: push @missing_attr, $_;
+	}
+
+	return +{ %new_hash, map { ($_ => $self->meta->get_attribute($_)->get_value($self)) } @missing_attr };
 };
 
 my $_as_hash_fast_v1 = sub { +{ %{$_[0]} } };
@@ -118,19 +138,32 @@ sub as_hash {
 	my $self = shift;
 
 	my $details = $CLASS_TO_IMPLEMENTATION{ref $self} || [$_as_hash_safe];
-	my ($implementation, $include_attr) = @$details;
-	return $implementation->($self, $include_attr);
+	my ($implementation, $params) = @$details;
+	return $implementation->($self, $params);
 }
 
 sub optimize_as_hash {
 	my $class = shift;
 
-	if ($class->can('does') && ! $class->does('MooseX::InsideOut::Role::Meta::Instance')) {
-		if ( defined $INCLUDE_ATTR && @$INCLUDE_ATTR ) {
-			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v3, $INCLUDE_ATTR];
-		} elsif ( first { $_->is_lazy } $class->meta->get_all_attributes ) {
-			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v2];
-		} else {
+	my @all_attributes = $class->meta->get_all_attributes;
+	my %name_to_attr = map { ($_->name => $_) } @all_attributes;
+
+	delete @name_to_attr{@$EXCLUDE_ATTR};
+	my @all_valid_attr = values %name_to_attr;
+
+	#TODO: should we also check the attributes or is the class enough?
+	my $is_inside_out = $class->can('does') && $class->does('MooseX::InsideOut::Role::Meta::Instance');
+	my $has_lazy = any { $_->is_lazy } @all_valid_attr;
+	my @undefined_attrs = grep { ! ($_->has_default || $_->is_required) } @all_valid_attr;
+
+	if (! $is_inside_out) {
+		if (! ($has_lazy || @undefined_attrs) ) {
+			$CLASS_TO_IMPLEMENTATION{$class} = (@$EXCLUDE_ATTR)
+				? [$_as_hash_fast_v3, $EXCLUDE_ATTR]
+				: [$_as_hash_fast_v1];
+		} elsif (@undefined_attrs) {
+			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v2, [keys %name_to_attr]];
+		} elsif (! @$EXCLUDE_ATTR) {
 			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v1];
 		}
 	}
