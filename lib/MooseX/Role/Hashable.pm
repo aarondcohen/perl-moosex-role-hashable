@@ -154,7 +154,7 @@ sub optimize_as_hash {
 	#TODO: should we also check the attributes or is the class enough?
 	my $is_inside_out = $class->can('does') && $class->does('MooseX::InsideOut::Role::Meta::Instance');
 	my $has_lazy = any { $_->is_lazy } @all_valid_attr;
-	my @undefined_attrs = grep { ! ($_->has_default || $_->is_required) } @all_valid_attr;
+	my @undefined_attrs = grep { ! ($_->has_default || $_->is_required || ($_->has_builder && ! $_->is_lazy)) } @all_valid_attr;
 
 	if (! $is_inside_out) {
 		if (! ($has_lazy || @undefined_attrs) ) {
