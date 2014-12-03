@@ -9,7 +9,9 @@ MooseX::Role::Hashable - transform the object into a hash
 use strict;
 use warnings;
 
-use Moose::Role;
+use List::Util qw{any first};
+use MooseX::Role::Parameterized;
+
 use namespace::autoclean;
 
 =head1 VERSION
@@ -30,7 +32,7 @@ Example usage:
 
 	package Foo;
 	use Moose;
-	use MooseX::Role::Hashable;
+	with MooseX::Role::Hashable;
 
 	has field1 => (is => 'rw');
 	has field2 => (is => 'ro');
@@ -44,7 +46,50 @@ Example usage:
 	$foo->as_hash;
 	# => {field1 => 'val1', field2 => 'val2', field3 => 'val3'}
 
+Optionally, you can explcitly remove fields from the hash.
+Example usage:
+	package Foo;
+	use Moose;
+	with 'MooseX::Role::Hashable' => {exclusions => [qw{field3 field4}]};
+
+	has field1 => (is => 'rw');
+	has field2 => (is => 'ro');
+	has field3 => (is => 'bare');
+	has field4 => (is => 'rw');
+
+	__PACKAGE__->meta->make_immutable;
+
+	package main;
+
+	my $foo = Foo->new(field1 => 'val1', field2 => 'val2', field3 => 'val3');
+	$foo->as_hash;
+	# => {field1 => 'val1', field2 => 'val2'}
+
 =cut
+
+my %CLASS_TO_IMPLEMENTATION;
+
+parameter exclusions => (isa => 'ArrayRef', default => sub { [] });
+
+role {
+	my $params = shift;
+	my %args = @_;
+
+	my $class_meta = $args{consumer};
+	#FIXME: There's a bug here when $class_meta is undefined for a Child class
+	$CLASS_TO_IMPLEMENTATION{$class_meta->name}{exclusions} = $params->exclusions;
+
+	my $moose_meta = Moose::Meta::Class->meta;
+	$moose_meta->make_mutable;
+	$moose_meta->add_after_method_modifier('make_immutable', sub {
+		my $meta = shift;
+		my $class = $meta->name;
+		$class->optimize_as_hash
+			if $class->can('does')
+			&& $class->does(__PACKAGE__);
+	});
+	$moose_meta->make_immutable;
+};
 
 =head1 METHODS
 
@@ -58,12 +103,88 @@ as_hash will perform a shallow copy.
 
 =cut
 
-sub as_hash {
+
+my $_as_hash_fast_remove = sub {
 	my $self = shift;
+	my $exclusions = $CLASS_TO_IMPLEMENTATION{ref $self}{exclusions};
+
+	my %new_hash = %$self;
+	delete @new_hash{@$exclusions};
+
+	return \%new_hash;
+};
+
+my $_as_hash_fast_fetch = sub {
+	my $self = shift;
+	my $inclusions = $CLASS_TO_IMPLEMENTATION{ref $self}{inclusions};
+
+	my %new_hash;
+	my @missing_names;
+	for (@$inclusions) {
+		if (exists $self->{$_}) {
+			$new_hash{$_} = $self->{$_}
+		} else {
+			push @missing_names, $_;
+		}
+	}
+
+	return +{ %new_hash, map { ($_ => $self->meta->find_attribute_by_name($_)->get_value($self)) } @missing_names };
+};
+
+my $_as_hash_fast_raw = sub { +{ %{$_[0]} } };
+
+my $_as_hash_safe = sub {
+	my $self = shift;
+	my $exclusions = $CLASS_TO_IMPLEMENTATION{ref $self}{exclusions};
+
+	my @all_attributes = $self->meta->get_all_attributes;
+	my %name_to_attr = map { ($_->name => $_) } @all_attributes;
+	delete @name_to_attr{@$exclusions};
 	return +{
 		map { ($_->name => $_->get_value($self)) }
-		$self->meta->get_all_attributes
+		values %name_to_attr
 	};
+};
+
+sub as_hash {
+	my $self = shift;
+
+	my $implementation = $CLASS_TO_IMPLEMENTATION{ref $self} || {code => $_as_hash_safe};
+	exists $implementation->{code}
+		? return $implementation->{code}->($self)
+		: return $_as_hash_safe->($self);
+}
+
+sub optimize_as_hash {
+	my $class = shift;
+
+	my @all_attributes = $class->meta->get_all_attributes;
+	my %name_to_attr = map { ($_->name => $_) } @all_attributes;
+	my $implementation = $CLASS_TO_IMPLEMENTATION{$class};
+	my $exclusions = $implementation->{exclusions};
+
+	delete @name_to_attr{@$exclusions};
+	my @all_valid_attr = values %name_to_attr;
+
+	#TODO: should we also check the attributes or is the class enough?
+	my $is_inside_out = $class->can('does') && $class->does('MooseX::InsideOut::Role::Meta::Instance');
+	my $has_lazy = any { $_->is_lazy } @all_valid_attr;
+	my @undefined_attrs = grep { ! ($_->has_default || $_->is_required || ($_->has_builder && ! $_->is_lazy)) } @all_valid_attr;
+
+	if (! $is_inside_out) {
+		if (! ($has_lazy || @undefined_attrs) ) {
+			$implementation->{code} = (@$exclusions)
+				? $_as_hash_fast_remove
+				: $_as_hash_fast_raw;
+		} elsif (@undefined_attrs) {
+			$implementation->{code} = $_as_hash_fast_fetch;
+			$implementation->{inclusions} = [keys %name_to_attr];
+		} elsif (! @$exclusions) {
+			$implementation->{code} = $_as_hash_fast_raw;
+		}
+	}
+
+	return;
 }
 
 =head1 AUTHOR
