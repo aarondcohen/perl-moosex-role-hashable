@@ -50,7 +50,7 @@ Optionally, you can explcitly remove fields from the hash.
 Example usage:
 	package Foo;
 	use Moose;
-	with 'MooseX::Role::Hashable' => {exclude_attr => [qw{field3 field4}]};
+	with 'MooseX::Role::Hashable' => {exclusions => [qw{field3 field4}]};
 
 	has field1 => (is => 'rw');
 	has field2 => (is => 'ro');
@@ -67,21 +67,26 @@ Example usage:
 
 =cut
 
-parameter exclude_attr => (isa => 'ArrayRef', default => sub { [] });
+my %CLASS_TO_IMPLEMENTATION;
 
-my $EXCLUDE_ATTR;
+parameter exclusions => (isa => 'ArrayRef', default => sub { [] });
 
 role {
 	my $params = shift;
-	$EXCLUDE_ATTR = $params->exclude_attr;
+	my %args = @_;
+
+	my $class_meta = $args{consumer};
+	#FIXME: There's a bug here when $class_meta is undefined for a Child class
+	$CLASS_TO_IMPLEMENTATION{$class_meta->name}{exclusions} = $params->exclusions;
 
 	my $moose_meta = Moose::Meta::Class->meta;
 	$moose_meta->make_mutable;
 	$moose_meta->add_after_method_modifier('make_immutable', sub {
 		my $meta = shift;
-		$meta->name->optimize_as_hash
-			if $meta->name->can('does')
-			&& $meta->name->does(__PACKAGE__);
+		my $class = $meta->name;
+		$class->optimize_as_hash
+			if $class->can('does')
+			&& $class->does(__PACKAGE__);
 	});
 	$moose_meta->make_immutable;
 };
@@ -98,48 +103,56 @@ as_hash will perform a shallow copy.
 
 =cut
 
-my %CLASS_TO_IMPLEMENTATION;
 
-my $_as_hash_fast_v3 = sub {
+my $_as_hash_fast_remove = sub {
 	my $self = shift;
-	my $exclude_attr = shift;
+	my $exclusions = $CLASS_TO_IMPLEMENTATION{ref $self}{exclusions};
 
 	my %new_hash = %$self;
-	delete @new_hash{@$exclude_attr};
+	delete @new_hash{@$exclusions};
+
 	return \%new_hash;
 };
 
-my $_as_hash_fast_v2 = sub {
+my $_as_hash_fast_fetch = sub {
 	my $self = shift;
-	my $include_attr = shift;
+	my $inclusions = $CLASS_TO_IMPLEMENTATION{ref $self}{inclusions};
 
 	my %new_hash;
-	my @missing_attr;
-	for (@$include_attr) {
-		exists $self->{$_}
-			? $new_hash{$_} = $self->{$_}
-			: push @missing_attr, $_;
+	my @missing_names;
+	for (@$inclusions) {
+		if (exists $self->{$_}) {
+			$new_hash{$_} = $self->{$_}
+		} else {
+			push @missing_names, $_;
+		}
 	}
 
-	return +{ %new_hash, map { ($_ => $self->meta->get_attribute($_)->get_value($self)) } @missing_attr };
+	return +{ %new_hash, map { ($_ => $self->meta->find_attribute_by_name($_)->get_value($self)) } @missing_names };
 };
 
-my $_as_hash_fast_v1 = sub { +{ %{$_[0]} } };
+my $_as_hash_fast_raw = sub { +{ %{$_[0]} } };
 
 my $_as_hash_safe = sub {
 	my $self = shift;
+	my $exclusions = $CLASS_TO_IMPLEMENTATION{ref $self}{exclusions};
+
+	my @all_attributes = $self->meta->get_all_attributes;
+	my %name_to_attr = map { ($_->name => $_) } @all_attributes;
+	delete @name_to_attr{@$exclusions};
 	return +{
 		map { ($_->name => $_->get_value($self)) }
-		$self->meta->get_all_attributes
+		values %name_to_attr
 	};
 };
 
 sub as_hash {
 	my $self = shift;
 
-	my $details = $CLASS_TO_IMPLEMENTATION{ref $self} || [$_as_hash_safe];
-	my ($implementation, $params) = @$details;
-	return $implementation->($self, $params);
+	my $implementation = $CLASS_TO_IMPLEMENTATION{ref $self} || {code => $_as_hash_safe};
+	exists $implementation->{code}
+		? return $implementation->{code}->($self)
+		: return $_as_hash_safe->($self);
 }
 
 sub optimize_as_hash {
@@ -147,8 +160,10 @@ sub optimize_as_hash {
 
 	my @all_attributes = $class->meta->get_all_attributes;
 	my %name_to_attr = map { ($_->name => $_) } @all_attributes;
+	my $implementation = $CLASS_TO_IMPLEMENTATION{$class};
+	my $exclusions = $implementation->{exclusions};
 
-	delete @name_to_attr{@$EXCLUDE_ATTR};
+	delete @name_to_attr{@$exclusions};
 	my @all_valid_attr = values %name_to_attr;
 
 	#TODO: should we also check the attributes or is the class enough?
@@ -158,13 +173,14 @@ sub optimize_as_hash {
 
 	if (! $is_inside_out) {
 		if (! ($has_lazy || @undefined_attrs) ) {
-			$CLASS_TO_IMPLEMENTATION{$class} = (@$EXCLUDE_ATTR)
-				? [$_as_hash_fast_v3, $EXCLUDE_ATTR]
-				: [$_as_hash_fast_v1];
+			$implementation->{code} = (@$exclusions)
+				? $_as_hash_fast_remove
+				: $_as_hash_fast_raw;
 		} elsif (@undefined_attrs) {
-			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v2, [keys %name_to_attr]];
-		} elsif (! @$EXCLUDE_ATTR) {
-			$CLASS_TO_IMPLEMENTATION{$class} = [$_as_hash_fast_v1];
+			$implementation->{code} = $_as_hash_fast_fetch;
+			$implementation->{inclusions} = [keys %name_to_attr];
+		} elsif (! @$exclusions) {
+			$implementation->{code} = $_as_hash_fast_raw;
 		}
 	}
 

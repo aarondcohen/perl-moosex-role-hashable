@@ -34,11 +34,12 @@ use Test::Most tests => 3;
 {
 	package Foo::FastV3;
 	use Moose;
-	with 'MooseX::Role::Hashable' => {exclude_attr => [qw{bar3 bar4}]};
+	with 'MooseX::Role::Hashable' => {exclusions => [qw{bar3 bar4 nonexist}]};
 
 	has bar1 => (is => 'rw', default => 23);
 	has bar2 => (is => 'rw', default => 46);
 	has bar3 => (is => 'rw', default => 42);
+	has bar4 => (is => 'rw');
 
 	__PACKAGE__->meta->make_immutable;
 }

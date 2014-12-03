@@ -34,7 +34,7 @@ my $count = $ARGV[0] || -5;
 {
 	package Foo::FastV3;
 	use Moose;
-	with 'MooseX::Role::Hashable' => {exclude_attr => [qw{bar3 bar4}]};
+	with 'MooseX::Role::Hashable' => {exclusions => [qw{bar3 bar4 nonexist}]};
 
 	has bar1 => (is => 'rw', default => 23);
 	has bar2 => (is => 'rw', default => 46);

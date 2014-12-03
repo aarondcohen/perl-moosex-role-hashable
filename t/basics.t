@@ -6,7 +6,7 @@ use warnings qw(all);
 use FindBin ();
 use lib "$FindBin::Bin/../lib/";
 
-use Test::Most tests => 9;
+use Test::Most tests => 13;
 
 use_ok 'MooseX::Role::Hashable';
 
@@ -43,3 +43,45 @@ is_deeply
 	$foo->as_hash,
 	{public => 'beach', _private => 'property', empty => undef, bare => 'ly tall enough', lazy => 'laissez', lazy_build => 'lazier', reference => \@ref_val},
 	'All attributes are accounted for';
+
+{
+	package FooSlow;
+	use Moose;
+	with 'MooseX::Role::Hashable' => {exclusions => [qw{bare}]};
+
+	has public => (is => 'rw');
+	has _private => (is => 'ro');
+	has bare => (is => 'bare');
+	has empty => (is => 'rw');
+}
+
+my $foo_slow = FooSlow->new(public => 'park', _private => 'party', bare => 'yogi');
+is $foo_slow->as_hash->{public}, 'park', 'Public attributes appear';
+is $foo_slow->as_hash->{_private}, 'party', 'Private attributes appear';
+is $foo->as_hash->{empty}, undef, 'Uninitialized attributes appear';
+ok ! exists $foo_slow->as_hash->{bare}, 'Bare attributes excluded';
+
+{
+	package FooParent;
+	use Moose;
+	with 'MooseX::Role::Hashable' => {exclusions => [qw{bare}]};
+
+	has public => (is => 'rw');
+	has _private => (is => 'ro');
+	has bare => (is => 'bare');
+
+	__PACKAGE__->meta->make_immutable;
+}
+
+{
+	package FooChild;
+	use Moose;
+
+	extends 'FooParent';
+	has empty => (is => 'rw');
+
+	__PACKAGE__->meta->make_immutable;
+}
+
+my $foo_child = FooChild->new(public => 'beach', _private => 'property', bare => 'ly tall enough', empty => undef);
+$foo_child->as_hash;
