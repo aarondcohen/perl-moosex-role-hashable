@@ -10,7 +10,6 @@ use strict;
 use warnings;
 
 use Moose::Role;
-use List::Util qw{first};
 use namespace::autoclean;
 
 =head1 VERSION
@@ -52,9 +51,10 @@ do {
 	$moose_meta->make_mutable;
 	$moose_meta->add_after_method_modifier('make_immutable', sub {
 		my $meta = shift;
-		$meta->name->optimize_as_hash
-			if $meta->name->can('does')
-			&& $meta->name->does(__PACKAGE__);
+		my $class = $meta->name;
+		$class->optimize_as_hash
+			if $class->can('does')
+			&& $class->does(__PACKAGE__);
 	});
 	$moose_meta->make_immutable;
 };
@@ -71,32 +71,28 @@ as_hash will perform a shallow copy.
 
 =cut
 
-my %CLASS_TO_IMPLEMENTATION;
-
-my $_as_hash_fast = sub { +{ %{$_[0]} } };
-
-my $_as_hash_safe = sub {
-	my $self = shift;
-	return +{
-		map { ($_->name => $_->get_value($self)) }
-		$self->meta->get_all_attributes
-	};
-};
+my %CLASS_TO_POSSIBLE_ATTRIBUTES;
 
 sub as_hash {
 	my $self = shift;
 
-	my $implementation = $CLASS_TO_IMPLEMENTATION{ref $self} || $_as_hash_safe;
-	return $implementation->($self);
+	my @possible_attributes = exists $CLASS_TO_POSSIBLE_ATTRIBUTES{ref $self}
+		? @{$CLASS_TO_POSSIBLE_ATTRIBUTES{ref $self}}
+		: $self->meta->get_all_attributes;
+
+	my %copy = %$self;
+	my @missing_attributes = grep { ! exists $copy{$_->name} } @possible_attributes;
+	$copy{$_->name} = $_->get_value($self) for @missing_attributes;
+
+	return \%copy;
 }
 
 sub optimize_as_hash {
 	my $class = shift;
 
-	$CLASS_TO_IMPLEMENTATION{$class} = $_as_hash_fast
-		if $class->can('does')
-		&& ! $class->does('MooseX::InsideOut::Role::Meta::Instance')
-		&& ! first { $_->is_lazy } $class->meta->get_all_attributes;
+	@{$CLASS_TO_POSSIBLE_ATTRIBUTES{$class}} = grep {
+		! ($_->is_required || ! $_->is_lazy && ($_->has_builder || $_->has_default))
+	} $class->meta->get_all_attributes;
 
 	return;
 }
