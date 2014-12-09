@@ -44,6 +44,14 @@ my $_as_hash_diff_v4 = sub {
 	return $copy;
 };
 
+my $_as_hash_diff_v5 = sub {
+	my $self = shift;
+
+	my @missing_attributes = grep { ! exists $self->{$_->name} } @_;
+
+	return +{ %$self, $_meta_extract->($self, @missing_attributes) };
+};
+
 my $_as_hash_safe = sub {
 	my $self = shift;
 	return +{ $_meta_extract->($self, $self->meta->get_all_attributes) };
@@ -72,6 +80,7 @@ is_deeply $_as_hash_diff_v1->(Foo->new), $_as_hash_safe->(Foo->new);
 is_deeply $_as_hash_diff_v2->(Foo->new), $_as_hash_safe->(Foo->new);
 is_deeply $_as_hash_diff_v3->(Foo->new), $_as_hash_safe->(Foo->new);
 is_deeply $_as_hash_diff_v4->(Foo->new, @possible_attrs), $_as_hash_safe->(Foo->new);
+is_deeply $_as_hash_diff_v5->(Foo->new, @possible_attrs), $_as_hash_safe->(Foo->new);
 is_deeply(Foo->new->as_hash, $_as_hash_safe->(Foo->new));
 
 cmpthese(-5, {
@@ -80,5 +89,6 @@ cmpthese(-5, {
 	v2 => sub { $_as_hash_diff_v2->(Foo->new) },
 	v3 => sub { $_as_hash_diff_v3->(Foo->new) },
 	v4 => sub { $_as_hash_diff_v4->(Foo->new, @possible_attrs) },
+	v5 => sub { $_as_hash_diff_v5->(Foo->new, @possible_attrs) },
 	role => sub { Foo->new->as_hash },
 });

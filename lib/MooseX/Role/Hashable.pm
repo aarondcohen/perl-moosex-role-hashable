@@ -14,11 +14,11 @@ use namespace::autoclean;
 
 =head1 VERSION
 
-Version 1.01
+Version 1.02
 
 =cut
 
-our $VERSION = '1.01';
+our $VERSION = '1.02';
 
 =head1 SYNOPSIS
 
@@ -48,7 +48,10 @@ Example usage:
 
 do {
 	my $moose_meta = Moose::Meta::Class->meta;
-	$moose_meta->make_mutable;
+	my $modify_immutable = $moose_meta->is_immutable;
+
+	$moose_meta->make_mutable if $modify_immutable;
+
 	$moose_meta->add_after_method_modifier('make_immutable', sub {
 		my $meta = shift;
 		my $class = $meta->name;
@@ -56,7 +59,16 @@ do {
 			if $class->can('does')
 			&& $class->does(__PACKAGE__);
 	});
-	$moose_meta->make_immutable;
+
+	$moose_meta->add_after_method_modifier('make_mutable', sub {
+		my $meta = shift;
+		my $class = $meta->name;
+		$class->deoptimize_as_hash
+			if $class->can('does')
+			&& $class->does(__PACKAGE__);
+	});
+
+	$moose_meta->make_immutable if $modify_immutable;
 };
 
 =head1 METHODS
@@ -94,12 +106,33 @@ sub optimize_as_hash {
 		! ($_->is_required || ! $_->is_lazy && ($_->has_builder || $_->has_default))
 	} $class->meta->get_all_attributes;
 
+	for ($class->meta->direct_subclasses) {
+		if ($class->meta->is_immutable) {
+			$_->meta->make_mutable;
+			$_->meta->make_immutable;
+		} else {
+			$_->optimize_as_hash;
+		}
+	}
+
+	return;
+}
+
+sub deoptimize_as_hash {
+	my $class = shift;
+
+	delete $CLASS_TO_POSSIBLE_ATTRIBUTES{$class};
+	$_->deoptimize_as_hash for $class->meta->direct_subclasses;
+
 	return;
 }
 
 =head1 AUTHOR
 
 Aaron Cohen, C<< <aarondcohen at gmail.com> >>
+
+Special thanks to:
+L<Dibin Pookombil|https://github.com/dibinp>
 
 =head1 ACKNOWLEDGEMENTS
 
@@ -144,7 +177,7 @@ L<http://search.cpan.org/dist/MooseX-Role-Hashable/>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright 2013 Aaron Cohen.
+Copyright 2013,2014 Aaron Cohen.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of either: the GNU General Public License as published
