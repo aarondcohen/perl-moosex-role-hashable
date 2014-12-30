@@ -98,7 +98,7 @@ my $extract_attributes_ref = sub {
 		#Make sure attribute overrides take precedence
 		reverse $_[0]->meta->linearized_isa;
 };
-my $extract_ignored_ref = sub { grep { ! $_->has_init_arg } @_ };
+my $extract_ignored_ref = sub { grep { $_->does('Unhashable') || ! $_->has_init_arg } @_ };
 my $extract_translated_ref = sub { map { ($_->name => $_->init_arg) } grep { $_->has_init_arg && $_->init_arg ne  $_->name } @_ };
 my $extract_uninitialized_ref = sub { grep { ! ($_->is_required || ! $_->is_lazy && ($_->has_builder || $_->has_default)) } @_ };
 my $prepare_attributes_ref = sub {

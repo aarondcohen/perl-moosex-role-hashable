@@ -47,6 +47,21 @@ use Test::Most;
 	__PACKAGE__->meta->make_immutable;
 }
 {
+	package Unhashable;
+	use Moose;
+	use MooseX::Trait::Unhashable;
+	with 'MooseX::Role::Hashable';
+
+	has $_ => (is => 'rw', default => undef) for map { "field$_" } (10 .. 19);
+	has $_ => (is => 'rw', default => 1) for map { "field$_" } (20 .. 29);
+	has $_ => (is => 'rw', lazy => 1, builder => '_build_attr', traits => [qw{Unhashable}]) for map { "field$_" } (30 .. 31);
+	has $_ => (is => 'rw', default => 1, lazy => 1, traits => [qw{Unhashable}]) for map { "field$_" } (40 .. 41);
+	has "_$_" => (is => 'rw', init_arg => $_) for map { "field$_" } (50 .. 51);
+	sub _build_attr { 1 }
+
+	__PACKAGE__->meta->make_immutable;
+}
+{
 	package Unoptimized;
 	use Moose;
 	with 'MooseX::Role::Hashable';
@@ -61,9 +76,11 @@ use Test::Most;
 
 is_deeply(Augmented->new->as_hash, Unoptimized->new->as_hash);
 is_deeply(UndefInit->new->as_hash, Unoptimized->new->as_hash);
+is_deeply(Unhashable->new->as_hash, Unoptimized->new->as_hash);
 
 cmpthese(-5, {
 	augmented => sub { Augmented->new->as_hash },
 	undef_init => sub { UndefInit->new->as_hash },
+	unhashable => sub { Unhashable->new->as_hash },
 	unoptimized => sub { Unoptimized->new->as_hash },
 });
